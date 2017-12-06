@@ -176,7 +176,7 @@ void *producerControl(void *tempIndex)
 	int id = *(int*) tempIndex;
 	syncLock = 0;
 
-    // Opening the input file
+        // Opening the input file
 	FILE *input = fopen(inputFileName, "r");
 	if (input == NULL)
 	{
@@ -192,12 +192,12 @@ void *producerControl(void *tempIndex)
 
         if (id == tempId)   // relevant student found
         {
-            // import student info from the input file
+                // import student info from the input file
         	int garbage;
         	struct student* new = ( struct student* ) malloc( sizeof( struct student ) );
         	sscanf(buffer, "%i %i %s %s %lf",&garbage, &new->sid, new->firstname, new->lastname, &new->cgpa);
 
-            // Acquire lock on the buffer
+                // Acquire lock on the buffer
         	pthread_mutex_lock(&(locks[id]->mutex));
 
         	// Wait till there is any space in the buffer to put date into
@@ -206,7 +206,7 @@ void *producerControl(void *tempIndex)
         		pthread_cond_wait(&(locks[id]->emptyExists), &(locks[id]->mutex));
         	}
 
-            // Add student to the buffer and updating related lock info
+                // Add student to the buffer and updating related lock info
         	buffers[id][locks[id]->end] = new;
         	locks[id]->count++;
         	locks[id]->end++;
@@ -215,7 +215,7 @@ void *producerControl(void *tempIndex)
         		locks[id]->end = 0;
         	}       	
 
-            // unlock the buffer 
+                // unlock the buffer 
         	pthread_mutex_unlock(&(locks[id]->mutex));    
         }   
 
@@ -270,7 +270,7 @@ void *consumerControl()
 					totalCount--;
 					pthread_mutex_unlock(&totalCountLock);		
 
-        		 	// if buffer was full then signal the relevant producer to wake up
+        		 	        // if buffer was full then signal the relevant producer to wake up
 					if (locks[i]->count < M)
 					{
 						pthread_cond_signal(&locks[i]->emptyExists);				
