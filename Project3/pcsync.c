@@ -107,10 +107,16 @@ int main(int argc, char *argv[])
 				puts("Error opening input file!");
 				exit(1);
 			}
-			char buffer[30];
-			while (EOF != fscanf(input, "%30[^\n]\n", buffer))
+
+			// counting total students
+			int ch;
+			while(!feof(input))
 			{
-				totalStudents++;
+				ch = fgetc(input);
+				if(ch == '\n')
+				{
+					totalStudents++;
+				}
 			}
 
 			// Creating the array to hold the buffers	
@@ -176,37 +182,38 @@ void *producerControl(void *tempIndex)
 	int id = *(int*) tempIndex;
 	syncLock = 0;
 
-        // Opening the input file
-	FILE *input = fopen(inputFileName, "r");
-	if (input == NULL)
-	{
-		puts("Error opening input file!");
-		exit(1);
-	}
-	char buffer[30];
+	// Opening file
+	FILE * fp;
+    char * line = NULL;
+    size_t len = 0;
+    ssize_t read;
 
-	while (EOF != fscanf(input, "%30[^\n]\n", buffer))
+    fp = fopen(inputFileName, "r");
+    if (fp == NULL)
+        exit(EXIT_FAILURE);    
+
+    while ((read = getline(&line, &len, fp)) != -1)	// read till end of file
 	{
 		int tempId;
-		sscanf(buffer, "%i", &tempId);
+		sscanf(line, "%i", &tempId);
 
         if (id == tempId)   // relevant student found
         {
-                // import student info from the input file
-        	int garbage;
+            // import student info from the input file
+     	  	int garbage;
         	struct student* new = ( struct student* ) malloc( sizeof( struct student ) );
-        	sscanf(buffer, "%i %i %s %s %lf",&garbage, &new->sid, new->firstname, new->lastname, &new->cgpa);
+        	sscanf(line, "%i %i %s %s %lf",&garbage, &new->sid, new->firstname, new->lastname, &new->cgpa);
 
-                // Acquire lock on the buffer
+            // Acquire lock on the buffer
         	pthread_mutex_lock(&(locks[id]->mutex));
 
-        	// Wait till there is any space in the buffer to put date into
+        	// Wait till there is any space in the buffer to put data into
         	while(locks[id]->count >= M)
         	{
         		pthread_cond_wait(&(locks[id]->emptyExists), &(locks[id]->mutex));
         	}
 
-                // Add student to the buffer and updating related lock info
+            // Add student to the buffer and updating related lock info
         	buffers[id][locks[id]->end] = new;
         	locks[id]->count++;
         	locks[id]->end++;
@@ -215,7 +222,7 @@ void *producerControl(void *tempIndex)
         		locks[id]->end = 0;
         	}       	
 
-                // unlock the buffer 
+            // unlock the buffer 
         	pthread_mutex_unlock(&(locks[id]->mutex));    
         }   
 
@@ -230,7 +237,9 @@ void *producerControl(void *tempIndex)
     }    
 
     // Releasing resources
-    fclose(input);
+    fclose(fp);
+    if (line)
+        free(line);
 
     pthread_exit(0);
 }
@@ -270,7 +279,7 @@ void *consumerControl()
 					totalCount--;
 					pthread_mutex_unlock(&totalCountLock);		
 
-        		 	        // if buffer was full then signal the relevant producer to wake up
+        		 	// if buffer was full then signal the relevant producer to wake up
 					if (locks[i]->count < M)
 					{
 						pthread_cond_signal(&locks[i]->emptyExists);				
@@ -280,6 +289,7 @@ void *consumerControl()
 				pthread_mutex_unlock(&(locks[i]->mutex));	// unlock the buffer
 			}
 		}
+
 	} while(j < totalStudents); // Run until all students are processed
 
 	// Opening the output file for the consumer
@@ -299,7 +309,7 @@ void *consumerControl()
 	{
 		while ( cur != NULL )
 		{
-			fprintf(output, "%i %s %s %lf\n", cur->sid, cur->firstname, cur->lastname, cur->cgpa);
+			fprintf(output, "%i %s %s %.2lf\n", cur->sid, cur->firstname, cur->lastname, cur->cgpa);
 			cur = cur->next;
 		}
 	}
