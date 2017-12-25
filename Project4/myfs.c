@@ -623,27 +623,7 @@ int myfs_write(int fd, void *buf, int n)
 
 int myfs_truncate(int fd, int size)
 {
-	// int fileSize;
-	// if(mountedFlag == 1){
-	// 	if(openFileTable[fd].available == 0){
-	// 		fileSize = openFileTable[fd].fcb->size;
-	// 		//file size should be higher than the size parameter, otherwise function has no effect.
-	// 		if(fileSize <= size)
-	// 			return -1;
-	// 		else{
-	// 			int diff = fileSize - size;
-	// 			int curBlock = openFileTable[fd].fcb.startBlock + (fileSize - diff);
-				
-	// 			//deallocate memory
-	// 			for(int i = curBlock; i < fileSize; i++)
-	// 				FAT[i] = 0;
-	// 			//new size 
-	// 			openFileTable[fd].fcb.size = fileSize - diff;
-
-	// 			return 0;
-	// 		}
-	// 	}
-	// }  				
+	
 	return -1; 
 } 
 
