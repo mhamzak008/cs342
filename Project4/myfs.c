@@ -17,7 +17,8 @@ int  disk_blockcount;  // block count on disk
 struct FCB
 {
 	int startBlock;
-	int size;	
+	int size;
+	int sizeBytes;	
 };
 
 struct directEntry
@@ -28,7 +29,7 @@ struct directEntry
 };
 
 struct directEntry directory[MAXFILECOUNT];
-char FAT[BLOCKCOUNT];
+int FAT[BLOCKCOUNT];
 
 struct openFileTableEntry	// element of open file table
 {
@@ -101,6 +102,20 @@ int putblock (int blocknum, void *buf)
    internal functions. 
  */
 
+void checkFAT()
+{
+	int n = 0;
+	int zero = 0;
+	for(int i = 0; i < BLOCKCOUNT; i++)
+	{
+		if(FAT[i] == -1)
+			n++;
+		if(FAT[i] == 0)
+			zero++;
+	}
+	printf("n: %i\n", n);
+	printf("0: %i\n", zero);
+}
 
 int myfs_diskcreate (char *vdisk)
 {
@@ -155,7 +170,7 @@ int myfs_makefs(char *vdisk)
 	}
 	
 	// perform your format operations here. 
-	printf ("formatting disk2=%s, size=%d\n", vdisk, disk_size);
+	printf ("formatting disk=%s, size=%d\n", vdisk, disk_size);
 
 	// Creating and initializing directory
 	struct directEntry directory[MAXFILECOUNT];
@@ -168,13 +183,13 @@ int myfs_makefs(char *vdisk)
 
 	// Creating and initializing free space manager
 	// first 1/4 blocks to be reserved for meta-data
-	char FAT[BLOCKCOUNT];
+	int FAT[BLOCKCOUNT];
 	for (int i = 0; i < BLOCKCOUNT; i++)
 	{
 		if(i < (BLOCKCOUNT/4))
-			FAT[i] = 'n';
+			FAT[i] = -1;
 		else
-			FAT[i] = '0';
+			FAT[i] = 0;
 	}
 
 	// Storing directory in the disk in blocks 1 and 2
@@ -197,10 +212,13 @@ int myfs_makefs(char *vdisk)
 		return -1;
 
 	// storing FAT in the disk from blocks 3 to 10  
+	char tempFAT[BLOCKCOUNT*sizeof(int)];
+	memcpy(tempFAT, FAT, BLOCKCOUNT*sizeof(int));
+
 	int blockNum = 3;
-	for(int i = 0; i < BLOCKCOUNT; i = i + BLOCKSIZE)
+	for(int i = 0; i < BLOCKCOUNT*sizeof(int); i = i + BLOCKSIZE)
 	{
-		memcpy(block, &FAT[i], BLOCKSIZE);
+		memcpy(block, &tempFAT[i], BLOCKSIZE);
 		putblock(blockNum, block);
 		blockNum++;
 	}
@@ -253,14 +271,17 @@ int myfs_mount (char *vdisk)
 		memcpy(&directory[64], block2, 64*(sizeof(struct directEntry)));
 
 		// getting the FAT from disk
+		char tempFAT[BLOCKCOUNT*sizeof(int)];
+	
 		int blockNum = 3;
-		for(int i = 0; i < BLOCKCOUNT; i = i + BLOCKSIZE)
+		for(int i = 0; i < BLOCKCOUNT*sizeof(int); i = i + BLOCKSIZE)
 		{
 			if(getblock(blockNum, block) != 0) // getting the block
 				return -1;	
-			memcpy(&FAT[i], block, BLOCKSIZE);	// copying the block to FAT
+			memcpy(&tempFAT[i], block, BLOCKSIZE);	// copying the block to FAT
 			blockNum++;
 		}
+		memcpy(FAT, tempFAT, BLOCKCOUNT*sizeof(int));
 
 		// initializing the system-wide open-file table
 		for (int i = 0; i < MAXOPENFILES; i++)
@@ -273,7 +294,7 @@ int myfs_mount (char *vdisk)
 	else
 		return -1;
 
-	return (0); 
+	return 0; 
 }
 
 
@@ -300,11 +321,14 @@ int myfs_umount()
 		if(putblock(2, block) != 0)
 			return -1;
 
-		// storing FAT in the disk from blocks 3 to 10  
+		// storing FAT in the disk from blocks 3 to 10 
+		char tempFAT[BLOCKCOUNT*sizeof(int)];
+		memcpy(tempFAT, FAT, BLOCKCOUNT*sizeof(int));
+
 		int blockNum = 3;
-		for(int i = 0; i < BLOCKCOUNT; i = i + BLOCKSIZE)
+		for(int i = 0; i < BLOCKCOUNT*sizeof(int); i = i + BLOCKSIZE)
 		{
-			memcpy(block, &FAT[i], BLOCKSIZE);
+			memcpy(block, &tempFAT[i], BLOCKSIZE);
 			putblock(blockNum, block);
 			blockNum++;
 		}
@@ -332,7 +356,7 @@ int myfs_create(char *filename)
 		for(int i = 0; i < MAXFILECOUNT; i++)
 		{
 			if(strcmp(directory[i].fileName, filename) == 0)
-				return -1;
+				return myfs_open(filename);
 		}
 
 		// find an empty directory to store the file
@@ -344,13 +368,16 @@ int myfs_create(char *filename)
 				found = 1;
 				directory[i].available = 0;
 				strcpy(directory[i].fileName, filename);
+				directory[i].fcb.sizeBytes = 0;
+				directory[i].fcb.size = 0;
+				return myfs_open(filename);
 			}
 		}
 	}	
 	else
 		return -1;
 	
-	return 0;
+	return -1;
 }
 
 /* open file filename */
@@ -360,8 +387,12 @@ int myfs_open(char *filename)
 
 	if(mountedFlag == 1){
 		//file is already open
-		for(int i = 0; i < MAXOPENFILES; i++){
-			if((openFileTable[i].available == 0) && (strcmp(openFileTable[i].fileName, filename) == 0)){
+		int found = 0;
+		for(int i = 0; (i < MAXOPENFILES) && (found == 0); i++)
+		{
+			if((openFileTable[i].available == 0) && (strcmp(openFileTable[i].fileName, filename) == 0))
+			{
+				found = 1;
 				openFileTable[i].position = 0;	// reset position
 				openFileTable[i].openCount++;	
 				return i;	// if exists then return its handler
@@ -386,7 +417,6 @@ int myfs_open(char *filename)
 						openFileTable[j].position = 0;
 						openFileTable[i].openCount = 1;
 						strcpy(openFileTable[j].fileName, filename);
-						//memcpy(&(openFileTable[j].fcb), &(directory[i].fcb), sizeof(struct FCB));
 						openFileTable[j].fcb = &(directory[i].fcb);
 						index = j;
 					}
@@ -435,11 +465,11 @@ int myfs_delete(char *filename)
 				int entry = directory[i].fcb.startBlock;
 				if(entry != -1)
 				{
-					while(FAT[entry] != 'n')
+					while(FAT[entry] != -1)
 					{
-						char tempEntry = FAT[entry];
-						FAT[entry] = '0';
-						entry = tempEntry - '0';
+						int tempEntry = FAT[entry];
+						FAT[entry] = 0;
+						entry = tempEntry;
 					}
 
 					directory[i].fcb.startBlock = -1;
@@ -470,9 +500,9 @@ int myfs_read(int fd, void *buf, int n)
 
 					int blockReadAddress = openFileTable[fd].fcb->startBlock;
 					int i = 0;					
-					while((i < blockReadPosition) && (FAT[blockReadAddress] != 'n'))	
+					while(i < blockReadPosition)	
 					{
-						blockReadAddress = FAT[blockReadAddress] - '0';
+						blockReadAddress = FAT[blockReadAddress];
 						i++;
 					}
 
@@ -488,31 +518,35 @@ int myfs_read(int fd, void *buf, int n)
 					getblock(blockReadAddress, block);
 					bytes_read = 0;
 					int blocksFinished = 0;
-					while((bytes_read < n) && (blocksFinished == 0))
+					char tempBuf[n];
+					int tempBufCount = 0;
+					while((bytes_read < n) && (blocksFinished == 0) && (bytes_read < openFileTable[fd].fcb->sizeBytes))
 					{
-						memcpy(&(buf[displacement]), &(block[displacement]), 1);
+						memcpy( &(tempBuf[tempBufCount]), &(block[displacement]), 1);
 						displacement++;
 						bytes_read++;
+						openFileTable[fd].position++;
+						tempBufCount++;
 
 						if(displacement >= BLOCKSIZE)	// If current block full
-						{
+						{							
 							// get the next file block from FAT
-							if(FAT[blockReadAddress] != 'n')	// check if not last block of file
+							if(FAT[blockReadAddress] != -1)	// check if not last block of file
 							{
-								blockReadAddress = FAT[blockReadAddress] - '0';
+								blockReadAddress = FAT[blockReadAddress];
 								getblock(blockReadAddress, block);	// get the new block
 								displacement = 0;
 							}
 							else
 								blocksFinished = 1;
 						}
-					}
+					}					
+					memcpy(buf, tempBuf, n);
 				}
 			}
 		}
 	}	
 	return (bytes_read); 
-
 }
 
 int myfs_write(int fd, void *buf, int n)
@@ -523,31 +557,35 @@ int myfs_write(int fd, void *buf, int n)
 	{
 		if(openFileTable[fd].available == 0)	// file opened check
 		{
-			if(n <= 1024)	// upper limit of n check
+			if(n <= MAXREADWRITE)	// upper limit of n check
 			{
+				char tempBuf[n];
+				memcpy(tempBuf, buf, n);
+
 				if(openFileTable[fd].fcb->startBlock == -1)	// check if first write of file
 				{
 					// search for an empty block
 					int emptyBlockFound = 0;
 					for(int i = 0; (i < BLOCKCOUNT) && (emptyBlockFound == 0); i++)
 					{
-						if (FAT[i] == '0') 	// empty block found
+						if (FAT[i] == 0) 	// empty block found
 						{
 							emptyBlockFound = 1;
 
 							openFileTable[fd].fcb->startBlock = i;	// point the block to file
-							FAT[i] = 'n';	// mark the block as occupied
+							FAT[i] = -1;	// mark the block as occupied
 
 							// write to the block
-							char block[BLOCKSIZE]; 
+							char block[BLOCKSIZE];							 
 							for(int j = 0; j < n; j++)
 							{
-								memcpy(&(block[j]), &(buf[j]), 1);																
+								memcpy(&(block[j]), &(tempBuf[j]), 1);								
+								openFileTable[fd].fcb->sizeBytes++;
 							}
 							putblock(i, block);
 							openFileTable[fd].position = n;
 							bytes_written = n;
-							openFileTable[fd].fcb->size = BLOCKSIZE;							
+							openFileTable[fd].fcb->size = BLOCKSIZE;														
 						}
 					}
 				}
@@ -558,9 +596,9 @@ int myfs_write(int fd, void *buf, int n)
 
 					int blockWriteAddress = openFileTable[fd].fcb->startBlock;
 					int i = 0;					
-					while((i < blockWritePosition) && (FAT[blockWriteAddress] != 'n'))	
+					while(i < blockWritePosition)	
 					{
-						blockWriteAddress = FAT[blockWriteAddress] - '0';
+						blockWriteAddress = FAT[blockWriteAddress];
 						i++;
 					}
 
@@ -576,11 +614,15 @@ int myfs_write(int fd, void *buf, int n)
 					getblock(blockWriteAddress, block);
 					bytes_written = 0;
 					int blocksFinished = 0;
+					int tempBufCount = 0;
 					while((bytes_written < n) && (blocksFinished == 0))
 					{
-						memcpy(&(block[displacement]), &(buf[displacement]), 1);
+						memcpy(&(block[displacement]), &(tempBuf[tempBufCount]), 1);
 						displacement++;
 						bytes_written++;
+						openFileTable[fd].fcb->sizeBytes++;	
+						openFileTable[fd].position++;
+						tempBufCount++;					
 
 						if(displacement >= BLOCKSIZE)	// If current block full
 						{
@@ -588,16 +630,16 @@ int myfs_write(int fd, void *buf, int n)
 							int blockFound = 0;
 							for(int i = 0; (i <  BLOCKCOUNT) && (blockFound == 0); i++)
 							{
-								if(FAT[i] == '0')	// empty block found
-								{									
+								if(FAT[i] == 0)	// empty block found
+								{								
 									putblock(blockWriteAddress, block);	// put the current one back
 									openFileTable[fd].fcb->size += BLOCKSIZE;
 
 									blockFound = 1;
 
 									// update FAT
-									FAT[blockWriteAddress] = i + '0';
-									FAT[i] = 'n';
+									FAT[blockWriteAddress] = i;
+									FAT[i] = -1;
 
 									blockWriteAddress = i;
 									getblock(blockWriteAddress, block);	// get the new block
@@ -623,7 +665,47 @@ int myfs_write(int fd, void *buf, int n)
 
 int myfs_truncate(int fd, int size)
 {
-	
+	if(mountedFlag == 1){
+		if(openFileTable[fd].available == 0)
+		{
+			//file size should be higher than the size parameter, otherwise function has no effect.
+			if(openFileTable[fd].fcb->sizeBytes > size)
+			{
+				int blockPosition = openFileTable[fd].fcb->startBlock;
+
+				if(blockPosition != -1)
+				{
+					// finding the block index to truncate to	
+					int blockWritePosition = openFileTable[fd].position / BLOCKSIZE;
+
+					int blockWriteAddress = openFileTable[fd].fcb->startBlock;
+					int i = 0;					
+					while(i < blockWritePosition)	
+					{
+						blockWriteAddress = FAT[blockWriteAddress];
+						i++;
+					}
+
+					// deleting all the blocks from the blockWriteAddress onwards
+					int entry = blockWriteAddress;
+					while(FAT[entry] != -1)
+					{
+						int tempEntry = FAT[entry];
+						FAT[entry] = 0;
+						entry = tempEntry;
+					}
+					FAT[entry] = 0;
+
+					openFileTable[fd].fcb->sizeBytes = size;
+
+					if(openFileTable[fd].position > size)
+						openFileTable[fd].position = size;
+
+					return 0;		
+				}				
+			}
+		}
+	}  				
 	return -1; 
 } 
 
@@ -632,15 +714,19 @@ int myfs_seek(int fd, int offset)
 	int position = -1; 
 
 	int fileSize;
-	if(mountedFlag == 1){
-		if(openFileTable[fd].available == 0){
-			fileSize = openFileTable[fd].fcb->size;
+	if(mountedFlag == 1)
+	{
+		if(openFileTable[fd].available == 0)
+		{
+			fileSize = openFileTable[fd].fcb->sizeBytes;
+
 			//if offset is bigger than the file size, position will be filesize
 			if(fileSize <= offset){
 				openFileTable[fd].position = fileSize;
 				position = fileSize;
 			}
-			else{
+			else
+			{
 				openFileTable[fd].position = offset;
 				position = offset;
 			}
@@ -656,7 +742,7 @@ int myfs_filesize (int fd)
 	
 	if(mountedFlag == 1){
 		if(openFileTable[fd].available == 0)
-			size = openFileTable[fd].fcb->size;
+			size = openFileTable[fd].fcb->sizeBytes;
 	}	
 
 	return (size); 
@@ -689,16 +775,15 @@ void myfs_print_blocks (char *  filename)
 			if(entry != -1)
 			{
 				printf("%i ", entry);
-				while(FAT[entry] != 'n')
+				while(FAT[entry] != -1)
 				{
-					char c = FAT[entry];
-					printf("%c ", c);
+					int c = FAT[entry];
+					printf("%i ", c);
 
-					entry = FAT[entry] - '0';
+					entry = FAT[entry];
 				}
 			}
 			printf("\n");
 		}
 	}
 }
-
