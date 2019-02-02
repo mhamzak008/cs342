@@ -2,4 +2,3 @@
 CS342 Fall 2017 project 2 
 
 Muhammad Hamza Khan
-21402885
